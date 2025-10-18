@@ -1,0 +1,1624 @@
+esphome:
+  name: inverter
+  # friendly_name: Inverter
+
+substitutions:
+  friendly_name: "inverter"
+  # Define skip counts based on the fast interval for easier modification
+  fast_update_interval: "5s" # Base interval for the controller
+  medium_skip_updates: "5" # (30s / 5s) - 1
+  slow_skip_updates: "11" # (60s / 5s) - 1
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+  baud_rate: 0
+
+# Enable Home Assistant API
+api:
+
+
+ota:
+
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Inverter Fallback Hotspot"
+    password: "password"
+
+#### Web Page Setup#####
+web_server:
+  port: 80
+  auth:
+    username: 
+    password: 
+
+#  fast_connect: true
+#  power_save_mode: none
+
+captive_portal:
+
+# Enable time component to reset energy at midnight
+# https://esphome.io/components/time.html#home-assistant-time-source
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+     
+uart:
+  id: mod_bus
+  tx_pin: 17
+  rx_pin: 16
+  baud_rate: 9600
+  stop_bits: 1
+ 
+modbus:
+  id: inverter_modbus
+  flow_control_pin: 4
+ 
+# Single Modbus Controller set to the fastest required interval
+modbus_controller:
+  - id: inverter
+    address: 0x01
+    modbus_id: inverter_modbus
+    setup_priority: -10
+    update_interval: ${fast_update_interval} # Fastest interval needed
+    command_throttle: 100ms # Increased throttle
+
+############################################### BINARY SENSORS ########################################
+# Binary sensors will poll at the controller's interval (5s) as update_interval/skip_updates is not supported
+binary_sensor:           
+  - platform: modbus_controller            # 194 Grid Connected Status
+    name: "${friendly_name} Grid Connected Status"
+    id: inverter_grid_connected_status
+    register_type: holding
+    address: 194
+
+  - platform: modbus_controller           # 280 Gen Peak Shaving Status
+    name: "${friendly_name} Gen Peak Shaving Status"
+    id: inverter_gen_peak_shaving_status
+    register_type: holding
+    address: 280
+    bitmask: 0x10
+
+  - platform: modbus_controller           # 280 Grid Peak Shaving Status
+    name: "${friendly_name} Grid Peak Shaving Status"
+    id: inverter_grid_peak_shaving_status
+    register_type: holding
+    address: 280
+    bitmask: 0x100
+
+#                                               SENSORS                                               #
+#######################################################################################################
+
+##############################################Firmware##############################################
+sensor:
+  - platform: modbus_controller            # 013 Firmware Control Board
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "Firmware Control Board"
+    id: inverter_firmware_control_board
+    register_type: holding
+    address: 13
+
+  - platform: modbus_controller            # 014 Firmware Comms Board
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "Firmware Comms Board"
+    id: inverter_firmware_comms_board
+    register_type: holding
+    address: 14
+
+############################################### BATTERY ###############################################
+
+
+  - platform: modbus_controller            # 070 Battery Charge Day
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "Battery Charge Day"
+    id: inverter_battery_charge_day
+    register_type: holding
+    address: 70
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    filters: #GOOD
+      - lambda: |-
+            x = x / 10;
+            if (x > 32767) return (x - 65535) /1;
+            else return (x) /1;
+
+  - platform: modbus_controller            # 071 Battery Discharge Day
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "Battery Discharge Day"
+    id: inverter_battery_discharge_day
+    register_type: holding
+    address: 71
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    filters: #GOOD
+      - lambda: |-
+            x = x / 10;
+            if (x > 32767) return (x - 65535) /1;
+            else return (x) /1;
+
+  - platform: modbus_controller            # 072 Battery Charge Energy Total
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "Total Battery Charge (kWh)"
+    id: total_battery_charge_kwh
+    register_type: holding
+    address: 72
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_DWORD_R
+    filters:
+     - multiply: 0.1
+
+
+  - platform: modbus_controller            # 074 Battery Discharge Energy Total
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "Total Battery Discharge (kWh)"
+    id: total_battery_discharge_kwh
+    register_type: holding
+    address: 74
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 0
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_DWORD_R
+    filters:
+     - multiply: 0.1
+
+  - platform: modbus_controller            # 182 Battery Temperature
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "${friendly_name} Battery Temperature"
+    id: inverter_battery_temperature
+    register_type: holding
+    address: 182
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+    value_type: U_WORD 
+    filters:
+      - offset: -1000
+      - multiply: 0.1
+
+  - platform: modbus_controller            # 183 Battery Voltage
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "${friendly_name} Battery Voltage"
+    id: inverter_battery_voltage
+    register_type: holding
+    address: 183
+    unit_of_measurement: "V"
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+    filters:
+      - multiply: 0.01
+    value_type: U_WORD
+
+  - platform: modbus_controller            # 184 Battery SOC
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "${friendly_name} Battery SOC"
+    id: inverter_battery_soc
+    register_type: holding
+    address: 184
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    device_class: battery
+    value_type: U_WORD
+
+  - platform: modbus_controller            # 190 Battery Power
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Battery Power"
+    id: inverter_battery_power
+    register_type: holding
+    address: 190
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    value_type: S_WORD
+
+  - platform: modbus_controller            # 191 Battery Current
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Battery Current"
+    id: inverter_battery_current
+    register_type: holding
+    address: 191
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+    value_type: S_WORD
+    filters:
+      - multiply: 0.01
+
+  - platform: modbus_controller            # 216 Battery Charging Efficiency
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "Battery Charging Efficiency"
+    id: battery_charging_efficiency
+    register_type: holding
+    address: 216
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    device_class: battery
+    filters: #GOOD
+      - lambda: |-
+            if (x > 32767) return (x - 65535) /10;
+            else return (x) /10;
+
+  - platform: modbus_controller            # 217 Battery Capacity Shutdown
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} Battery Capacity Shutdown"
+    id: inverter_battery_capacity_shutdown
+    register_type: holding
+    address: 217
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    device_class: battery
+
+############################################### INVERTER ##############################################
+
+  - platform: modbus_controller            # 090 DC Transformer Temperature
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "DC Transformer Temperature"
+    id: inverter_dctransformer_temperature
+    register_type: holding
+    address: 090
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+    filters: # GOOD
+      - lambda: |-
+            if (x > 32767) return ((x - 65535)-1000) / 10;
+            else return ((x)-1000) / 10;
+
+ # - platform: modbus_controller            # 091 Radiator Temperature
+ #   skip_updates: ${medium_skip_updates} # Medium update
+ #   name: "DC Radiator Temperature"
+ #   id: inverter_radiator_temperature
+ #   register_type: holding
+ #   address: 091
+ #   unit_of_measurement: "°C"
+ #   accuracy_decimals: 1
+ #   device_class: temperature
+ #   state_class: measurement
+ #   filters: # GOOD
+ #     - lambda: |-
+ #           if (x > 32767) return ((x - 65535)-1000) / 10;
+ #           else return ((x)-1000) / 10;
+
+  - platform: modbus_controller            # 175 Inverter Power
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Inverter Power"
+    id: inverter_inverter_power
+    register_type: holding
+    address: 175
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    value_type: S_WORD
+
+  - platform: modbus_controller            # 154 Inverter Voltage
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Inverter Voltage"
+    id: inverter_inverter_voltage
+    register_type: holding
+    address: 154
+    unit_of_measurement: "V"
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+    filters:
+      - multiply: 0.1
+    value_type: U_WORD 
+
+  - platform: modbus_controller            # 164 Inverter Current
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Inverter Current"
+    id: inverter_inverter_current
+    register_type: holding
+    address: 164
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+    value_type: S_WORD
+    filters:
+      - multiply: 0.01
+
+  - platform: modbus_controller            # 193 Inverter Frequency
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Inverter Frequency"
+    id: inverter_inverter_frequency
+    register_type: holding
+    address: 193
+    unit_of_measurement: "Hz"
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+    value_type: U_WORD
+    state_class: measurement
+
+############################################### GRID ##################################################
+
+  - platform: modbus_controller            # 076 Grid Import Day (Buy)
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "Grid Import Day (Buy)"
+    id: inverter_grid_import_day
+    register_type: holding
+    address: 76
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    filters: # GOOD
+      - lambda: |-
+            if (x > 32767) return (x - 65535) / 10;
+            else return x /10;
+
+
+  - platform: modbus_controller            # 078 Grid Import Energy Total (Buy)
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "Total Grid Import (kWh)"
+    id: total_grid_import_kwh
+    register_type: holding
+    address: 78
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_DWORD_R # Corrected based on documentation
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller             # 079 Grid Frequency
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "${friendly_name} Grid Frequency"
+    id: inverter_grid_frequency
+    register_type: holding
+    address: 79
+    unit_of_measurement: "Hz"
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+    value_type: U_WORD
+    state_class: measurement
+
+
+  - platform: modbus_controller            # 081 Grid Export Energy Total (Sell)
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "Total Grid Export (kWh)"
+    id: total_grid_export_kwh
+    register_type: holding
+    address: 81
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_DWORD_R # Corrected based on documentation
+    # Removed incorrect lambda filter
+    filters:
+      - multiply: 0.1 
+
+  - platform: modbus_controller            # 084 Daily Load
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "Daily Load Power (kWh)"
+    id: daily_load_power_kwh
+    register_type: holding
+    address: 84
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller            # 085 Total Load
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "Total Load Power (kWh)"
+    id: total_load_power_kwh
+    register_type: holding
+    address: 85
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_DWORD_R
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller             # 169 Grid Power
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Grid Power"
+    id: inverter_grid_power_169
+    register_type: holding
+    address: 169
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    value_type: S_WORD
+    filters:
+      - multiply: 10 # Added multiplier
+
+  - platform: modbus_controller             # 167 Grid LD Power
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Grid LD Power 167"
+    id: inverter_grid_power_167
+    register_type: holding
+    address: 167
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    value_type: S_WORD
+    filters:
+      - multiply: 10 # Added multiplier
+
+  - platform: modbus_controller             # 168 Grid L2 Power
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Grid L2 Power 168"
+    id: inverter_grid_power_168
+    register_type: holding
+    address: 168
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    value_type: S_WORD
+    # Assuming this might also need x10 based on context, add if necessary
+    # filters:
+    #   - multiply: 10 
+
+  - platform: modbus_controller             # 150 Grid Voltage
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Grid Voltage"
+    id: inverter_grid_voltage
+    register_type: holding
+    address: 150
+    unit_of_measurement: "V"
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+    filters:
+      - multiply: 0.1
+    value_type: U_WORD 
+
+  - platform: modbus_controller             # 160 Grid Current
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Grid Current"
+    id: inverter_grid_current
+    register_type: holding
+    address: 160
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+    value_type: S_WORD
+    filters:
+      - multiply: 0.01
+
+  - platform: modbus_controller             # 172 Grid CT Power
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Grid CT Power"
+    id: inverter_grid_ct_power
+    register_type: holding
+    address: 172
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    value_type: S_WORD
+    # Add multiplier if this sensor is also reading 1/10th
+    # filters:
+    #   - multiply: 10
+
+
+
+############################################### LOAD ################################################
+
+  - platform: modbus_controller            # 178 Load Power
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Load Power"
+    id: inverter_load_power
+    register_type: holding
+    address: 178
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    value_type: S_WORD
+    filters:
+      - multiply: 10 # Added multiplier
+
+  - platform: modbus_controller            # 176 Load L1 Power
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Load L1 Power"
+    id: inverter_load_l1_power
+    register_type: holding
+    address: 176
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    value_type: S_WORD
+    filters:
+      - multiply: 10 # Added multiplier
+
+  - platform: modbus_controller            # 177 Load L2 Power
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Load L2 Power"
+    id: inverter_load_l2_power
+    register_type: holding
+    address: 177
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    value_type: S_WORD
+    # Assuming this might also need x10 based on context, add if necessary
+    # filters:
+    #   - multiply: 10
+
+  - platform: modbus_controller            # 192 Load Frequency
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} Load Frequency"
+    id: inverter_load_frequency
+    register_type: holding
+    address: 192
+    unit_of_measurement: "Hz"
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+    value_type: U_WORD
+    state_class: measurement
+
+############################################### SOLAR PV1 #############################################
+
+  - platform: modbus_controller            # 186 PV1 Power
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} PV1 Power"
+    id: inverter_pv1_power
+    register_type: holding
+    address: 186
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    value_type: U_WORD
+
+  - platform: modbus_controller            # 109 PV1 Voltage
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} PV1 Voltage"
+    id: inverter_pv1_voltage
+    register_type: holding
+    address: 109
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+    value_type: U_WORD
+
+  - platform: modbus_controller            # 110 PV1 Current
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} PV1 Current"
+    id: inverter_pv1_current
+    register_type: holding
+    address: 110
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+    filters:
+      - multiply: 0.1
+    value_type: U_WORD
+
+
+
+############################################### SOLAR PV2 #############################################
+
+  - platform: modbus_controller            # 187 PV2 Power
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} PV2 Power"
+    id: inverter_pv2_power
+    register_type: holding
+    address: 187
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    value_type: U_WORD
+
+  - platform: modbus_controller            # 111 PV2 Voltage
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} PV2 Voltage"
+    id: inverter_pv2_voltage
+    register_type: holding
+    address: 111
+    unit_of_measurement: "V"
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+    device_class: voltage
+    state_class: measurement
+    value_type: U_WORD
+
+  - platform: modbus_controller            # 112 PV2 Current
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} PV2 Current"
+    id: inverter_pv2_current
+    register_type: holding
+    address: 112
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+    filters:
+      - multiply: 0.1
+    value_type: U_WORD
+
+############################################### SOLAR PV3 #############################################
+
+  - platform: modbus_controller            # 188 PV3 Power
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} PV3 Power"
+    id: inverter_pv3_power
+    register_type: holding
+    address: 188
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    value_type: U_WORD
+
+  - platform: modbus_controller            # 113 PV3 Voltage
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} PV3 Voltage"
+    id: inverter_pv3_voltage
+    register_type: holding
+    address: 113
+    unit_of_measurement: "V"
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+    device_class: voltage
+    state_class: measurement
+    value_type: U_WORD
+
+  - platform: modbus_controller            # 114 PV3 Current
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} PV3 Current"
+    id: inverter_pv3_current
+    register_type: holding
+    address: 114
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+    filters:
+      - multiply: 0.1
+    value_type: U_WORD
+
+############################################### SOLAR TOTALS ###########################################
+
+  - platform: template                   # Sum of PV1, PV2 and PV3 to get total PV Power
+    name: "${friendly_name} Solar Power"
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    lambda: |-
+      // Check if all source sensors have a valid state before summing
+      if (id(inverter_pv1_power).has_state() && id(inverter_pv2_power).has_state() && id(inverter_pv3_power).has_state()) {
+        return (id(inverter_pv1_power).state + id(inverter_pv2_power).state + id(inverter_pv3_power).state);
+      } else {
+        return NAN; // Not a Number, indicates state is unknown
+      }
+    update_interval: ${fast_update_interval} # Template sensors need their own interval
+
+  - platform: modbus_controller            # 096 PV Energy Total
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "Total PV Power (kWh)"
+    id: total_pv_power_kwh
+    register_type: holding
+    address: 96
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_DWORD_R # Corrected based on documentation
+    filters:
+      - multiply: 0.1
+
+
+  - platform: modbus_controller            # 108 Day PV Power
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "Daily PV Power (kWh)"
+    id: daily_pv_power_kwh
+    register_type: holding
+    address: 108
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.1
+
+####Calculate Daily String Totals######
+
+  - platform: total_daily_energy
+    name: 'Total PV1 Daily Energy'
+    power_id: inverter_pv1_power
+    unit_of_measurement: 'kWh'
+    state_class: total_increasing
+    device_class: energy
+    accuracy_decimals: 3
+    filters:
+      # Multiplication factor from W to kW is 0.001
+      - multiply: 0.001
+
+  - platform: total_daily_energy
+    name: 'Total PV2 Daily Energy'
+    power_id: inverter_pv2_power
+    unit_of_measurement: 'kWh'
+    state_class: total_increasing
+    device_class: energy
+    accuracy_decimals: 3
+    filters:
+      # Multiplication factor from W to kW is 0.001
+      - multiply: 0.001
+
+  - platform: total_daily_energy
+    name: 'Total PV3 Daily Energy'
+    power_id: inverter_pv3_power
+    unit_of_measurement: 'kWh'
+    state_class: total_increasing
+    device_class: energy
+    accuracy_decimals: 3
+    filters:
+      # Multiplication factor from W to kW is 0.001
+      - multiply: 0.001
+
+############################################### OUTPUTS ###############################################
+
+  - platform: modbus_controller            # 166 Aux Power
+    # Uses default fast interval (no skip_updates)
+    name: "${friendly_name} AUX Power"
+    id: inverter_aux_power
+    register_type: holding
+    address: 166
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    value_type: S_WORD
+
+  - platform: template                   # Essential Power based on register 175 + 167 - 166
+    name: "${friendly_name} Essential Power"
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    lambda: |-
+      // Check if all source sensors have a valid state before calculating
+      if (id(inverter_inverter_power).has_state() && id(inverter_grid_power_167).has_state() && id(inverter_aux_power).has_state()) {
+        return (id(inverter_inverter_power).state + id(inverter_grid_power_167).state - id(inverter_aux_power).state);
+      } else {
+        return NAN; // Indicate state is unknown
+      }
+    update_interval: ${fast_update_interval} # Template sensors need their own interval
+
+  - platform: template                   # Essential Power1 based on register 175 + 169 - 166
+    name: "${friendly_name} Essential Power 1"
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    lambda: |-
+      // Check if all source sensors have a valid state before calculating
+      if (id(inverter_inverter_power).has_state() && id(inverter_grid_power_169).has_state() && id(inverter_aux_power).has_state()) {
+        return (id(inverter_inverter_power).state + id(inverter_grid_power_169).state - id(inverter_aux_power).state);
+      } else {
+        return NAN; // Indicate state is unknown
+      }
+    update_interval: ${fast_update_interval} # Template sensors need their own interval
+
+  - platform: template                   # Nonessential Power 172 - 167
+    name: "${friendly_name} Nonessential Power"
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    lambda: |-
+      // Check if both source sensors have a valid state before calculating
+      if (id(inverter_grid_ct_power).has_state() && id(inverter_grid_power_167).has_state()) {
+        return (id(inverter_grid_ct_power).state - id(inverter_grid_power_167).state);
+      } else {
+        return NAN; // Indicate state is unknown
+      }
+    update_interval: ${fast_update_interval} # Template sensors need their own interval
+
+  - platform: template                   # Nonessential Power1 172 - 169
+    name: "${friendly_name} Nonessential Power 1"
+    unit_of_measurement: "W"
+    accuracy_decimals: 0
+    device_class: power
+    state_class: measurement
+    lambda: |-
+      // Check if both source sensors have a valid state before calculating
+      if (id(inverter_grid_ct_power).has_state() && id(inverter_grid_power_169).has_state()) {
+        return (id(inverter_grid_ct_power).state - id(inverter_grid_power_169).state);
+      } else {
+        return NAN; // Indicate state is unknown
+      }
+    update_interval: ${fast_update_interval} # Template sensors need their own interval
+
+############################################### ENERGY ################################################
+
+  - platform: modbus_controller            # 070 Day Battery Charge
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "${friendly_name} Day Battery Charge"
+    id: inverter_day_battery_charge
+    register_type: holding
+    address: 70
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_WORD
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller            # 071 Day Battery Discharge
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "${friendly_name} Day Battery Discharge"
+    id: inverter_day_battery_discharge
+    register_type: holding
+    address: 71
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_WORD
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller            # 072 Total Battery Charge
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} Total Battery Charge"
+    id: inverter_total_battery_charge
+    register_type: holding
+    address: 72
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_DWORD_R
+    filters:
+     - multiply: 0.1
+
+  - platform: modbus_controller            # 074 Total Battery Discharge
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} Total Battery Discharge"
+    id: inverter_total_battery_discharge
+    register_type: holding
+    address: 74
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 0
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_DWORD_R
+    filters:
+     - multiply: 0.1
+
+  - platform: modbus_controller            # 076 Day Grid Import
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "${friendly_name} Day Grid Import"
+    id: inverter_day_grid_import
+    register_type: holding
+    address: 76
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_WORD
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller            # 077 Day Grid Export
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "${friendly_name} Day Grid Export"
+    id: inverter_day_grid_export
+    register_type: holding
+    address: 77
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_WORD
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller            # 078 Total Grid Import
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} Total Grid Import"
+    id: inverter_total_grid_import
+    register_type: holding
+    address: 78
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_DWORD_R 
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller            # 081 Total Grid Export
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} Total Grid Export"
+    id: inverter_total_grid_export
+    register_type: holding
+    address: 81
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_DWORD_R 
+    filters:
+      - multiply: 0.1 
+
+  - platform: modbus_controller            # 084 Day Load Energy
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "${friendly_name} Day Load Energy"
+    id: inverter_day_load_energy
+    register_type: holding
+    address: 84
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.1
+    value_type: U_WORD
+
+  - platform: modbus_controller            # 085 Total Load Energy
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} Total Load Energy"
+    id: inverter_total_load_energy
+    register_type: holding
+    address: 85
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+    value_type: U_DWORD_R
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller            # 096 Total PV Energy
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} Total PV Energy"
+    id: inverter_total_pv_energy
+    register_type: holding
+    address: 96
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 2
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.1
+    value_type: U_DWORD_R  
+
+  - platform: modbus_controller            # 108 Day PV Energy
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "${friendly_name} Day PV Energy"
+    id: inverter_day_pv_energy
+    register_type: holding
+    address: 108
+    unit_of_measurement: "kWh"
+    accuracy_decimals: 1
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.1
+    value_type: U_WORD
+
+
+
+
+############################################### TEMPERATURE ################################################
+
+  - platform: modbus_controller            # 090 DC Transformer Temperature
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "${friendly_name} DC Transformer Temperature"
+    id: inverter_dc_transformer_temperature
+    register_type: holding
+    address: 090
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+    value_type: S_WORD
+    filters:
+      - offset: -1000
+      - multiply:  0.1
+
+  - platform: modbus_controller            # 091 Radiator Temperature
+    skip_updates: ${medium_skip_updates} # Medium update
+    name: "${friendly_name} Radiator Temperature"
+    id: inverter_radiator_temperature
+    register_type: holding
+    address: 091
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+    value_type: S_WORD
+    filters:
+      - offset: -1000
+      - multiply:  0.1
+
+################################################ READ SETTINGS #############################################
+# These will use the slow interval via skip_updates
+  - platform: modbus_controller          # 250 System Mode Time 1
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} System Mode Time1"
+    id: inverter_system_mode_time1
+    register_type: holding
+    address: 250
+    icon: "mdi:clock"
+
+  - platform: modbus_controller          # 251 System Mode Time 2
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} System Mode Time2"
+    id: inverter_system_mode_time2
+    register_type: holding
+    address: 251   
+    icon: "mdi:clock"
+
+  - platform: modbus_controller          # 252 System Mode Time 3
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} System Mode Time3"
+    id: inverter_system_mode_time3
+    register_type: holding
+    address: 252
+    icon: "mdi:clock"
+
+  - platform: modbus_controller          # 253 System Mode Time 4
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} System Mode Time4"
+    id: inverter_system_mode_time4
+    register_type: holding
+    address: 253
+    icon: "mdi:clock"
+
+  - platform: modbus_controller          # 254 System Mode Time 5
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} System Mode Time5"
+    id: inverter_system_mode_time5
+    register_type: holding
+    address: 254
+    icon: "mdi:clock"
+
+  - platform: modbus_controller          # 255 System Mode Time 6
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} System Mode Time6"
+    id: inverter_system_mode_time6
+    register_type: holding
+    address: 255
+    icon: "mdi:clock"
+
+  - platform: modbus_controller        # 280 Grid Peak Shaving raw register value
+    skip_updates: ${slow_skip_updates} # Slow update
+    id: grid_peak_shaving_raw
+    register_type: holding
+    address: 280
+    value_type: U_WORD
+
+################################################ WRITE SETTINGS ############################################
+# Switches, numbers, and selects are typically read infrequently for state updates
+# Their state will be updated when the controller polls nearby registers based on skip_updates
+switch:
+  - platform: modbus_controller          # 326 Toggle Force Generator
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    name: "${friendly_name} Toggle Force Generator"
+    id: inverter_toggle_force_generator
+    register_type: holding
+    address: 326
+    bitmask: 8192 # 2^13 to target bit 13
+    icon: "mdi:toggle-switch"
+    
+  - platform: modbus_controller          # 247 Toggle Solar Sell
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    name: "${friendly_name} Toggle Solar sell"
+    id: inverter_toggle_solar_sell
+    register_type: holding
+    address: 247
+    bitmask: 1
+    icon: "mdi:toggle-switch"
+
+  - platform: modbus_controller          # 248 Toggle System Timer
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    name: "${friendly_name} Toggle System Timer" 
+    id: inverter_toggle_Time_of_Use
+    register_type: holding
+    address: 248
+    bitmask: 1
+    icon: "mdi:toggle-switch"
+
+  - platform: modbus_controller          # 243 Priority Load
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    name: "${friendly_name} Toggle Priority Load" 
+    id: inverter_toggle_priority_load
+    register_type: holding
+    address: 243
+    bitmask: 1
+    icon: "mdi:toggle-switch"
+
+  - platform: modbus_controller          # 274 System Mode Grid Charge Time 1
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    name: "${friendly_name} System Mode Grid Charge Time1"
+    id: inverter_toggle_grid_charge_time1
+    register_type: holding
+    address: 274
+    bitmask: 1
+    icon: "mdi:toggle-switch"
+
+  - platform: modbus_controller          # 275 System Mode Grid Charge Time 2
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    name: "${friendly_name} System Mode Grid Charge Time2"
+    id: inverter_toggle_grid_charge_time2
+    register_type: holding
+    address: 275
+    bitmask: 1
+    icon: "mdi:toggle-switch"
+
+  - platform: modbus_controller          # 276 System Mode Grid Charge Time 3
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    name: "${friendly_name} System Mode Grid Charge Time3"
+    id: inverter_toggle_grid_charge_time3
+    register_type: holding
+    address: 276
+    bitmask: 1
+    icon: "mdi:toggle-switch"
+
+  - platform: modbus_controller          # 277 System Mode Grid Charge Time 4
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    name: "${friendly_name} System Mode Grid Charge Time4"
+    id: inverter_toggle_grid_charge_time4
+    register_type: holding
+    address: 277
+    bitmask: 1
+    icon: "mdi:toggle-switch"
+
+  - platform: modbus_controller          # 278 System Mode Grid Charge Time 5
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    name: "${friendly_name} System Mode Grid Charge Time5"
+    id: inverter_toggle_grid_charge_time5
+    register_type: holding
+    address: 278
+    bitmask: 1
+    icon: "mdi:toggle-switch"
+
+  - platform: modbus_controller          # 279 System Mode Grid Charge Time 6
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    name: "${friendly_name} System Mode Grid Charge Time6"
+    id: inverter_toggle_grid_charge_time6
+    register_type: holding
+    address: 279
+    bitmask: 1
+    icon: "mdi:toggle-switch"
+
+number:
+  - platform: modbus_controller         # 268 System Mode SoC Time 1
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_set_soc_time1
+    name: "${friendly_name} System Mode SoC Time1"
+    unit_of_measurement: "%"
+    address: 268
+    min_value: 0
+    max_value: 100
+    step: 5
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 269 System Mode SoC Time 2
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_set_soc_time2
+    name: "${friendly_name} System Mode SoC Time2"
+    unit_of_measurement: "%"
+    address: 269
+    min_value: 0
+    max_value: 100
+    step: 5
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 270 System Mode SoC Time 3
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_set_soc_time3
+    name: "${friendly_name} System Mode SoC Time3"
+    unit_of_measurement: "%"
+    address: 270
+    min_value: 0
+    max_value: 100
+    step: 5
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 271 System Mode SoC Time 4
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_set_soc_time4
+    name: "${friendly_name} System Mode SoC Time4"
+    unit_of_measurement: "%"
+    address: 271
+    min_value: 0
+    max_value: 100
+    step: 5
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 272 System Mode SoC Time 5
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_set_soc_time5
+    name: "${friendly_name} System Mode SoC Time5"
+    unit_of_measurement: "%"
+    address: 272
+    min_value: 0
+    max_value: 100
+    step: 5
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 273 System Mode SoC Time 6
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_set_soc_time6
+    name: "${friendly_name} System Mode SoC Time6"
+    unit_of_measurement: "%"
+    address: 273
+    min_value: 0
+    max_value: 100
+    step: 5
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 256 System Mode Power Time 1
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_set_power_time1
+    name: "${friendly_name} System Mode Power Time1"
+    unit_of_measurement: "W"
+    address: 256
+    min_value: 0
+    max_value: 8000
+    step: 100
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 257 System Mode Power Time 2
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_set_power_time2
+    name: "${friendly_name} System Mode Power Time2"
+    unit_of_measurement: "W"
+    address: 257
+    min_value: 0
+    max_value: 8000
+    step: 100
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 258 System Mode Power Time 3
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_set_power_time3
+    name: "${friendly_name} System Mode Power Time3"
+    unit_of_measurement: "W"
+    address: 258
+    min_value: 0
+    max_value: 8000
+    step: 100
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 259 System Mode Power Time 4
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_set_power_time4
+    name: "${friendly_name} System Mode Power Time4"
+    unit_of_measurement: "W"
+    address: 259
+    min_value: 0
+    max_value: 8000
+    step: 100
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 260 System Mode Power Time 5
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_set_power_time5
+    name: "${friendly_name} System Mode Power Time5"
+    unit_of_measurement: "W"
+    address: 260
+    min_value: 0
+    max_value: 8000
+    step: 100
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 261 System Mode Power Time 6
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_set_power_time6
+    name: "${friendly_name} System Mode Power Time6"
+    unit_of_measurement: "W"
+    address: 261
+    min_value: 0
+    max_value: 8000
+    step: 100
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 230 Grid Charge Battery current
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_grid_charge_bat_current
+    name: "${friendly_name} Grid Charge Battery current"
+    unit_of_measurement: "A"
+    address: 230
+    min_value: 0
+    max_value: 185
+    step: 5
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 210 Battery Max Charge current
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_bat_max_charge_current
+    name: "${friendly_name} Battery Max Charge current"
+    unit_of_measurement: "A"
+    address: 210
+    min_value: 0
+    max_value: 185
+    step: 5
+    value_type: U_WORD  
+
+  - platform: modbus_controller         # 211 Battery Max Discharge current
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_bat_max_discharge_current
+    name: "${friendly_name} Battery Max Discharge current"
+    unit_of_measurement: "A"
+    address: 211
+    min_value: 0
+    max_value: 185
+    step: 5
+    value_type: U_WORD  
+
+  - platform: modbus_controller            # 293 Grid Peak Shaving Power
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    name: "${friendly_name} Grid Peak shaving power"
+    id: inverter_grid_peak_shaving_power
+    address: 293
+    unit_of_measurement: "W"
+    min_value: 0
+    max_value: 8000
+    step: 500
+    value_type: U_WORD
+
+  - platform: modbus_controller            # 245 Max Sell Power
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    name: "${friendly_name} Max Sell power"
+    id: inverter_max_sell_power
+    address: 245
+    unit_of_measurement: "W"
+    min_value: 0
+    max_value: 8000
+    step: 500
+    value_type: U_WORD
+
+
+
+
+
+################################################ TEXT SENSORS ##################################################
+
+text_sensor:
+  - platform: modbus_controller            # 059 Overall State
+    skip_updates: ${slow_skip_updates} # Slow update
+    name: "${friendly_name} Overall State"
+    id: inverter_overall_state
+    register_type: holding
+    raw_encode: HEXBYTES
+    address: 59
+    lambda: |- 
+      uint16_t value = modbus_controller::word_from_hex_str(x, 0);
+      switch (value) {
+        case 0: return std::string("standby");
+        case 1: return std::string("selftest");
+        case 2: return std::string("normal");
+        case 3: return std::string("alarm");
+        case 4: return std::string("fault");
+        default: return std::string("unknown");
+      }
+
+  - platform: template
+    name: "${friendly_name} Time Slot 1"
+    id: inverter_time_slot_1
+    icon: "mdi:clock"
+    # Use literal time value for template sensors
+    update_interval: 60s 
+    lambda: |-
+        int minutes, hours;
+        if (id(inverter_system_mode_time1).has_state()) {
+          minutes = static_cast<int>(id(inverter_system_mode_time1).state) % 100;
+          hours = static_cast<int>(id(inverter_system_mode_time1).state) / 100;
+        } else {
+          return {}; // Return empty if source sensor has no state yet
+        }
+        char formatted_time[6];
+        snprintf(formatted_time, sizeof(formatted_time), "%02d:%02d", hours, minutes);
+        return esphome::optional<std::string>(formatted_time);
+  - platform: template
+    name: "${friendly_name} Time Slot 2"
+    id: inverter_time_slot_2
+    icon: "mdi:clock"
+    # Use literal time value for template sensors
+    update_interval: 60s 
+    lambda: |-
+        int minutes, hours;
+        if (id(inverter_system_mode_time2).has_state()) {
+          minutes = static_cast<int>(id(inverter_system_mode_time2).state) % 100;
+          hours = static_cast<int>(id(inverter_system_mode_time2).state) / 100;
+        } else {
+          return {};
+        }
+        char formatted_time[6];
+        snprintf(formatted_time, sizeof(formatted_time), "%02d:%02d", hours, minutes);
+        return esphome::optional<std::string>(formatted_time);
+  - platform: template
+    name: "${friendly_name} Time Slot 3"
+    id: inverter_time_slot_3
+    icon: "mdi:clock"
+    # Use literal time value for template sensors
+    update_interval: 60s 
+    lambda: |-
+        int minutes, hours;
+        if (id(inverter_system_mode_time3).has_state()) {
+          minutes = static_cast<int>(id(inverter_system_mode_time3).state) % 100;
+          hours = static_cast<int>(id(inverter_system_mode_time3).state) / 100;
+        } else {
+          return {};
+        }
+        char formatted_time[6];
+        snprintf(formatted_time, sizeof(formatted_time), "%02d:%02d", hours, minutes);
+        return esphome::optional<std::string>(formatted_time);
+  - platform: template
+    name: "${friendly_name} Time Slot 4"
+    id: inverter_time_slot_4
+    icon: "mdi:clock"
+    # Use literal time value for template sensors
+    update_interval: 60s 
+    lambda: |-
+        int minutes, hours;
+        if (id(inverter_system_mode_time4).has_state()) {
+          minutes = static_cast<int>(id(inverter_system_mode_time4).state) % 100;
+          hours = static_cast<int>(id(inverter_system_mode_time4).state) / 100;
+        } else {
+          return {};
+        }
+        char formatted_time[6];
+        snprintf(formatted_time, sizeof(formatted_time), "%02d:%02d", hours, minutes);
+        return esphome::optional<std::string>(formatted_time);
+  - platform: template
+    name: "${friendly_name} Time Slot 5"
+    id: inverter_time_slot_5
+    icon: "mdi:clock"
+    # Use literal time value for template sensors
+    update_interval: 60s 
+    lambda: |-
+        int minutes, hours;
+        if (id(inverter_system_mode_time5).has_state()) {
+          minutes = static_cast<int>(id(inverter_system_mode_time5).state) % 100;
+          hours = static_cast<int>(id(inverter_system_mode_time5).state) / 100;
+        } else {
+          return {};
+        }
+        char formatted_time[6];
+        snprintf(formatted_time, sizeof(formatted_time), "%02d:%02d", hours, minutes);
+        return esphome::optional<std::string>(formatted_time);
+  - platform: template
+    name: "${friendly_name} Time Slot 6"
+    id: inverter_time_slot_6
+    icon: "mdi:clock"
+    # Use literal time value for template sensors
+    update_interval: 60s 
+    lambda: |-
+        int minutes, hours;
+        if (id(inverter_system_mode_time6).has_state()) {
+          minutes = static_cast<int>(id(inverter_system_mode_time6).state) % 100;
+          hours = static_cast<int>(id(inverter_system_mode_time6).state) / 100;
+        } else {
+          return {};
+        }
+        char formatted_time[6];
+        snprintf(formatted_time, sizeof(formatted_time), "%02d:%02d", hours, minutes);
+        return esphome::optional<std::string>(formatted_time);
+
+
+################################################ SELECT SENSORS ################################################
+
+select:
+  - platform: modbus_controller                   #243 Select Energy Patern
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_select_energy_pattern
+    name: "${friendly_name} Energy Pattern"
+    address: 243
+    value_type: U_WORD
+    optionsmap:
+      "Battery first": 0
+      "Load first": 1   
+         
+  - platform: modbus_controller                   #244 Select Work Mode
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    id: inverter_select_work_mode
+    name: "${friendly_name} Work Mode"
+    address: 244
+    value_type: U_WORD
+    optionsmap:
+      "Selling First": 0
+      "Zero Export + Limit to Load Only": 1
+      "Limited to Home": 2    
+
+  - platform: modbus_controller                  #280 Select Grid Peak Shaving
+    use_write_multiple: true
+    # State update relies on skip_updates of nearby slow sensors
+    name: "${friendly_name} Grid Peak Shaving"
+    id: inverter_select_grid_peak_shaving
+    address: 280
+    value_type: U_WORD
+    optionsmap:
+      "Disabled": 0
+      "Enabled": 256
+    lambda: |-
+      // we are only interested in the 8th bit binary 0001 0000 0000 need to map the options 0, 256 in select 
+      if (!id(grid_peak_shaving_raw).has_state()) return {}; // Check if raw sensor has state
+      // Rename the local variable to avoid shadowing the parameter 'x'
+      uint16_t raw_value = id(grid_peak_shaving_raw).state; 
+      //ESP_LOGE("main","Modbus eval value = %d",(raw_value & 0x0100));
+      // Use the new variable name 'raw_value' here
+      if ((raw_value & 0x0100) == 0) 
+        return  std::string("Disabled");
+      // Use the new variable name 'raw_value' here
+      if ((raw_value & 0x0100) == 256) 
+        return  std::string("Enabled");
+      return {};
+    write_lambda: |-
+      if (!id(grid_peak_shaving_raw).has_state()) return 0; // Don't write if raw state unknown
+      uint16_t unmodified =  id(grid_peak_shaving_raw).state;
+      // optionsmap should only return 2 values... 0 , 256 so bitmask with complement 0x0100 to ensure we keep the original values in register. Then apply OR with the value that was chosen
+      uint16_t modified = ((unmodified & ~0x0100) | value);
+      return modified;
