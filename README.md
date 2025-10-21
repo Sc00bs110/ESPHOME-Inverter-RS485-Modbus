@@ -90,6 +90,7 @@ Installation & Setup
 Clone the Repository: Download the inverter.yaml file to your ESPHome configuration directory.
 
 Create secrets.yaml: Create the secrets.yaml file as described above and enter your WiFi credentials.
+Update API, OTA & WEB server username & password. 
 
 Verify Hardware Pins: The configuration uses the following pins for the Lilygo T-CAN485 board. If you are using different hardware, adjust these pins under the uart: section.
 
